@@ -1,0 +1,10 @@
+.git
+.gitignore
+.env
+tests/
+scripts/
+output/
+input/
+*.md
+__pycache__
+.venv

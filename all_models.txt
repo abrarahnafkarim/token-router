@@ -1,0 +1,8 @@
+Fetching models...
+accounts/fireworks/models/flux-1-schnell-fp8
+accounts/fireworks/models/gpt-oss-120b
+accounts/fireworks/models/glm-5p1
+accounts/fireworks/models/deepseek-v4-pro
+accounts/fireworks/models/kimi-k2p6
+accounts/fireworks/models/kimi-k2p5
+accounts/fireworks/models/glm-5p2

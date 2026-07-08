@@ -1,0 +1,10 @@
+.env
+models/*
+!models/.gitkeep
+output/
+input/
+__pycache__/
+*.pyc
+*.gguf
+tests/generated/
+.venv/

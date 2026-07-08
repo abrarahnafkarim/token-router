@@ -1,0 +1,10 @@
+[
+  {"task_id": "t1", "prompt": "What is the capital of Bangladesh?"},
+  {"task_id": "t2", "prompt": "A jacket costs 1200 taka after a 20% discount. What was the original price?"},
+  {"task_id": "t3", "prompt": "Classify the sentiment of this review and justify your classification: \"The battery dies within an hour and the support team never replied. Terrible purchase.\""},
+  {"task_id": "t4", "prompt": "Summarise the following text in one sentence: Photosynthesis is the process by which green plants use sunlight to synthesise food from carbon dioxide and water. It occurs mainly in the chloroplasts, where the pigment chlorophyll captures light energy. The process releases oxygen as a by-product, which sustains most life on Earth."},
+  {"task_id": "t5", "prompt": "Extract the named entities (person, organization, location, date) from this text: \"Fatima, the CEO of Orbit Labs, met investors in Singapore on March 5, 2024.\""},
+  {"task_id": "t6", "prompt": "This Python function should return the average of a list of numbers, but it is buggy. Find the bug and provide the corrected code:\n```python\ndef average(nums):\n    total = 0\n    for n in nums:\n        total += n\n    return total / (len(nums) - 1)\n```"},
+  {"task_id": "t7", "prompt": "Alice, Karim and Nadia ran a race. Alice finished before Karim. Nadia did not finish first. Karim finished before Nadia. Who finished last?"},
+  {"task_id": "t8", "prompt": "Write a Python function is_prime(n) that returns True if n is a prime number and False otherwise."}
+]
