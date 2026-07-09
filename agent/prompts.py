@@ -15,10 +15,14 @@ def build(cat, prompt):
     if cat == Cat.MATH:
         return f"{p}\n\nSolve with brief steps. Final line must be exactly: Answer: <number>"
     if cat == Cat.SENTIMENT:
-        return (f"{p}\n\nReply in exactly this format:\n"
-                "Sentiment: <positive|negative|neutral>\nReason: <one short sentence>")
+        return (f"{p}\n\nClassify the sentiment as positive, negative, or neutral. "
+                "Reply ONLY in this exact format (no other text):\n"
+                "Sentiment: positive\nReason: The text expresses satisfaction.\n\n"
+                "Now classify the text above:")
     if cat == Cat.SUMMARY:
-        return (f"{p}\n\nOutput only the summary, nothing else. "
+        return (f"{p}\n\nWrite ONLY the summary text below. "
+                "Do NOT repeat the instructions or explain what you are doing. "
+                "Do NOT start with 'We need' or 'Let me'. "
                 "Obey the stated length/format limit exactly.")
     if cat == Cat.NER:
         if prompt_wants_custom_format(p):

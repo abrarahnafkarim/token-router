@@ -233,6 +233,17 @@ def verify(cat, ans, prompt):
     if cat == Cat.SUMMARY:
         kind, n = parse_summary_constraint(prompt)
         body = re.sub(r"(?i)^\s*summary\s*[:\-]\s*", "", a).strip()
+        # Strip meta-commentary patterns from models that echo instructions
+        body = re.sub(
+            r"(?i)^(we need|let'?s|need to|i need|let me|i will|here is|here's|the summary is)[^\n]*?[.:]\s*",
+            "", body).strip()
+        # Extract quoted summary if present
+        qm = re.search(r'"([^"]{8,})"', body)
+        if qm:
+            body = qm.group(1).strip()
+        # Strip trailing meta like "Count: ..." or "Word count: ..."
+        body = re.sub(r"\s*(?:Count|Word count|Words?)\s*[:=].*$", "", body,
+                      flags=re.I | re.S).strip()
         if kind == "words" and len(body.split()) > n:
             return False, body
         if kind == "sentences" and len(_sentences(body)) > n:

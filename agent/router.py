@@ -136,38 +136,74 @@ class Router:
             m = allm[0] if allm else None
         return m
 
-    def _remote(self, cat, prompt, plan, rmax):
-        model = self._pick_model(plan)
-        if not model or not (self.fw and self.fw.enabled):
-            return self._last_resort(cat, prompt)
+    def _fallback_models(self, plan):
+        """Return a list of models to try, primary first then fallbacks."""
+        primary = self._pick_model(plan)
+        strong = self.sel.get("strong")
+        language = self.sel.get("language")
+        candidates = []
+        if primary:
+            candidates.append(primary)
+        if strong and strong != primary:
+            candidates.append(strong)
+        if language and language not in candidates:
+            candidates.append(language)
+        for m in (self.sel.get("all") or []):
+            if m not in candidates:
+                candidates.append(m)
         allowed = set(self.sel.get("all") or [])
-        if allowed and model not in allowed:   # hard compliance guard
+        if allowed:
+            candidates = [m for m in candidates if m in allowed]
+        return candidates
+
+    def _remote(self, cat, prompt, plan, rmax):
+        models = self._fallback_models(plan)
+        if not models or not (self.fw and self.fw.enabled):
             return self._last_resort(cat, prompt)
         u = prompts.build(cat, prompt)
         json_mode = bool(plan.get("json")) and not V.prompt_wants_custom_format(prompt)
-        try:
-            txt = self.fw.chat(model, u, max_tokens=rmax, json_mode=json_mode)
-        except Exception:
-            return self._last_resort(cat, prompt)
-        ok, fixed = V.verify(cat, txt, prompt)
-        if ok:
-            return fixed
-        # NER structured retry, once, only if time clearly allows.
-        if cat == Cat.NER and json_mode and self.dl.hard_remaining() > 8:
+        for model in models:
             try:
-                txt2 = self.fw.chat(model, u, max_tokens=rmax, json_mode=True)
-                ok2, f2 = V.verify(cat, txt2, prompt)
-                if ok2:
-                    return f2
+                txt = self.fw.chat(model, u, max_tokens=rmax, json_mode=json_mode)
             except Exception:
-                pass
-        return txt.strip() or self._last_resort(cat, prompt)
+                continue  # try next model
+            ok, fixed = V.verify(cat, txt, prompt)
+            if ok:
+                return fixed
+            # NER structured retry, once, only if time clearly allows.
+            if cat == Cat.NER and json_mode and self.dl.hard_remaining() > 8:
+                try:
+                    txt2 = self.fw.chat(model, u, max_tokens=rmax, json_mode=True)
+                    ok2, f2 = V.verify(cat, txt2, prompt)
+                    if ok2:
+                        return f2
+                except Exception:
+                    pass
+            if txt.strip():
+                return txt.strip()
+        return self._last_resort(cat, prompt)
 
     # ------------------------------------------------------------ fallback
     def _last_resort(self, cat, prompt):
-        """Never leave an answer empty while any capacity remains."""
+        """Never leave an answer empty. Try every available remote model,
+        then a short local generation, then empty only if nothing is possible."""
+        plan = BASE_PLAN[cat]
+        if self.fw and self.fw.enabled and self.dl.hard_remaining() > 6:
+            models = self._fallback_models(plan)
+            allowed = set(self.sel.get("all") or [])
+            for model in models:
+                if allowed and model not in allowed:
+                    continue
+                try:
+                    txt = self.fw.chat(model, prompts.build(cat, prompt),
+                                       max_tokens=plan["rmax"])
+                    if txt.strip():
+                        _, fixed = V.verify(cat, txt, prompt)
+                        return fixed if fixed.strip() else txt.strip()
+                except Exception:
+                    continue
         if self.local and getattr(self.local, "ok", False):
-            gen_toks = min(96, BASE_PLAN[cat]["lmax"])
+            gen_toks = min(96, plan["lmax"])
             est = self.local.estimate(len(prompt) // 3, gen_toks)
             if self.dl.hard_remaining() > est + 2:
                 try:
@@ -175,3 +211,4 @@ class Router:
                 except Exception:
                     pass
         return ""
+
