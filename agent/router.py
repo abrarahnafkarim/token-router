@@ -87,6 +87,15 @@ class Router:
     def _local_eligible(self, cat, prompt, plan, tasks_left, lmax):
         if not self.local or self.cfg.force_remote:
             return False
+        
+        # Use fine-tuned DistilBERT router to classify "easy" vs "hard" locally for zero tokens
+        try:
+            from .infer_router import predict
+            if predict(prompt) == "hard":
+                return False  # Force escalation to remote models
+        except Exception:
+            pass  # Fall back to heuristic check if DistilBERT is missing/fails
+
         if cat.value in self.cfg.remote_cats:
             return False
         ptoks = len(prompt) // 3  # conservative chars->tokens estimate
