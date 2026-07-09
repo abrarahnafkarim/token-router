@@ -161,15 +161,18 @@ class Router:
         ok, fixed = V.verify(cat, txt, prompt)
         if ok:
             return fixed
-        # NER structured retry, once, only if time clearly allows.
-        if cat == Cat.NER and json_mode and self.dl.hard_remaining() > 8:
+
+        # If verification failed (e.g. format broken), do one corrective remote retry if time allows.
+        if not ok and self.dl.hard_remaining() > 8:
             try:
-                txt2 = self.fw.chat(model, u, max_tokens=rmax, json_mode=True)
+                retry_p = f"{u}\n\nYour previous answer was incorrectly formatted or invalid. Please follow the instructions exactly."
+                txt2 = self.fw.chat(model, retry_p, max_tokens=rmax, json_mode=json_mode)
                 ok2, f2 = V.verify(cat, txt2, prompt)
                 if ok2:
                     return f2
             except Exception:
                 pass
+
         return txt.strip() or self._last_resort(cat, prompt)
 
     # ------------------------------------------------------------ fallback
