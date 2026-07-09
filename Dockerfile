@@ -38,6 +38,7 @@ ENV LOCAL_MODEL_PATH=/app/models/local.gguf \
     TIME_RESERVE=30 \
     REMOTE_WORKERS=6 \
     SIMPLE_MODE=1 \
+    SIMPLE_MAX_TOKENS=2048 \
     MIN_TPS=1.5 \
     WEAK_TPS=4 \
     LOCAL_CTX=8192

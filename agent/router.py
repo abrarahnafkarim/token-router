@@ -128,21 +128,30 @@ class Router:
         return None
 
     # ------------------------------------------------------------ remote
-    def _pick_model(self, plan):
-        m = self.sel.get("strong") if plan["hard"] else self.sel.get("language")
-        m = m or self.sel.get("strong") or self.sel.get("language")
-        if not m:
-            allm = self.sel.get("all") or []
-            m = allm[0] if allm else None
-        return m
+    def _pick_model(self, cat):
+        mapping = {
+            Cat.SENTIMENT: "accounts/fireworks/models/gemma-4-26b-a4b-it",
+            Cat.NER: "accounts/fireworks/models/gemma-4-26b-a4b-it",
+            Cat.FACTUAL: "accounts/fireworks/models/gemma-4-26b-a4b-it",
+            Cat.SUMMARY: "accounts/fireworks/models/gemma-4-26b-a4b-it",
+            Cat.MATH: "accounts/fireworks/models/kimi-k2p7-code",
+            Cat.LOGIC: "accounts/fireworks/models/kimi-k2p7-code",
+            Cat.CODEGEN: "accounts/fireworks/models/minimax-m3",
+            Cat.DEBUG: "accounts/fireworks/models/kimi-k2p7-code",
+        }
+        return mapping.get(cat)
 
     def _remote(self, cat, prompt, plan, rmax):
-        model = self._pick_model(plan)
+        model = self._pick_model(cat)
         if not model or not (self.fw and self.fw.enabled):
             return self._last_resort(cat, prompt)
         allowed = set(self.sel.get("all") or [])
         if allowed and model not in allowed:   # hard compliance guard
-            return self._last_resort(cat, prompt)
+            # If the specific model is banned, fall back to whatever strong/language is allowed
+            fallback = self.sel.get("strong") if plan.get("hard") else self.sel.get("language")
+            model = fallback or allowed.pop() if allowed else None
+            if not model:
+                return self._last_resort(cat, prompt)
         u = prompts.build(cat, prompt)
         json_mode = bool(plan.get("json")) and not V.prompt_wants_custom_format(prompt)
         try:

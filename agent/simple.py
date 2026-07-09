@@ -37,8 +37,25 @@ def run_simple(tasks, fw, sel, deadline):
         return answers  # nothing we can do; valid (empty) JSON still ships
 
     def one(tid):
+        from .classifier import classify, Cat
+        prompt_text = prompts[tid]
+        cat = classify(prompt_text)
+        mapping = {
+            Cat.SENTIMENT: "accounts/fireworks/models/gemma-4-26b-a4b-it",
+            Cat.NER: "accounts/fireworks/models/gemma-4-26b-a4b-it",
+            Cat.FACTUAL: "accounts/fireworks/models/gemma-4-26b-a4b-it",
+            Cat.SUMMARY: "accounts/fireworks/models/gemma-4-26b-a4b-it",
+            Cat.MATH: "accounts/fireworks/models/kimi-k2p7-code",
+            Cat.LOGIC: "accounts/fireworks/models/kimi-k2p7-code",
+            Cat.CODEGEN: "accounts/fireworks/models/minimax-m3",
+            Cat.DEBUG: "accounts/fireworks/models/kimi-k2p7-code",
+        }
+        chosen = mapping.get(cat) or model
+        # Ensure the chosen model is actually allowed (fallback if not)
+        if allowed and chosen not in allowed:
+            chosen = model
         try:
-            txt = fw.chat(model, prompts[tid], max_tokens=max_toks, temperature=0.0)
+            txt = fw.chat(chosen, prompt_text, max_tokens=max_toks, temperature=0.0)
             return tid, (txt or "").strip()
         except Exception as e:
             print("SIMPLE ERROR:", type(e).__name__, e)
