@@ -222,7 +222,7 @@ def test_router_escalation():
     out = r.solve_all(tasks)
     check("math task answered", bool(out.get("m")))
     check("escalated to remote (disagreement)", fw.calls == 1)
-    check("hard category used STRONG model", "70b" in fw.log[0])
+    check("hard category used STRONG model", "gemma-4-31b-it-nvfp4" in fw.log[0])
 
 
 def test_router_force_remote():
@@ -240,8 +240,8 @@ def test_router_force_remote():
     r = Router(C(), None, fw, sel, Deadline(575, 30))
     out = r.solve_all(tasks)
     check("both answered via remote", len(out) == 2 and all(out.values()))
-    check("NER (language) routed to gemma", "gemma" in fw.log[0])
-    check("codegen (hard) routed to strong 70b", "70b" in fw.log[1])
+    check("NER (language) routed to gemma", "gemma-4-26b-a4b-it" in fw.log[0])
+    check("codegen (hard) routed to minimax-m3", "minimax-m3" in fw.log[1])
 
 
 def main():
