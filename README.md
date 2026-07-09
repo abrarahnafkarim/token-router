@@ -46,35 +46,16 @@ approve `docker`, `git`, and `python3` when prompted. Never commit `.env` or `mo
 ---
 
 ## Stage 0 — Verify the environment
-
-**Ubuntu 24.04 prerequisites (install first on a fresh box).** 24.04 ships Python 3.12
-and often lacks the compiler/CMake that the local-dev build needs, and — if Docker came
-from Ubuntu's own repo — the buildx plugin. This one line covers all of it:
-```bash
-sudo apt update && sudo apt install -y build-essential cmake docker-buildx-plugin
-# if 'docker' currently needs sudo, add yourself to the docker group (log out/in after):
-#   sudo usermod -aG docker "$USER"
-```
-
-Now verify:
 ```bash
 echo "== OS ==";        grep -E "PRETTY_NAME|VERSION_ID" /etc/os-release
 echo "== Docker ==";    docker --version && docker info 2>/dev/null | grep -i "Server Version"
 echo "== Buildx ==";    docker buildx version
-echo "== Compiler =="; cc --version | head -1 && cmake --version | head -1
 echo "== Python ==";    python3 --version
 echo "== Git ==";       git --version
 echo "== Disk (need >12GB free) =="; df -h . | tail -1
 echo "== Fireworks reachable =="; curl -sSI https://api.fireworks.ai | head -1
 ```
-Expect: Ubuntu 24.04, Docker with buildx, a working `cc`/`cmake`, Python ≥3.10, ≥12 GB free.
-
-> **24.04 notes.** (1) `docker buildx version` must succeed — Stages 5–7 depend on it; if it
-> errors, the `docker-buildx-plugin` install above fixes it. (2) 24.04 marks the system
-> Python as *externally managed* (PEP 668), so a bare `pip install` fails — Stage 4 uses a
-> venv, which sidesteps this entirely. (3) None of this affects the submitted image: the
-> Docker build uses its own `python:3.11-slim` base and installs its own build tools, so
-> your host's Python version is irrelevant at scoring time.
+Expect: Ubuntu 24.04, Docker with buildx, Python ≥3.10, ≥12 GB free.
 
 ## Stage 1 — Sanity-check the code offline (no Docker, no GGUF, no creds)
 ```bash
@@ -106,10 +87,8 @@ grep -q "^\.env$" .gitignore && echo ".env is git-ignored ✓"
 ## Stage 4 — (Optional) run the agent locally without Docker
 Fast iteration on the router logic on your CPU box:
 ```bash
-python3 -m venv .venv && source .venv/bin/activate   # venv avoids 24.04's PEP 668 block
+python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt        # compiles llama-cpp-python (needs build-essential, cmake)
-# if you ever run pip OUTSIDE the venv on 24.04 and hit "externally-managed-environment",
-# either activate the venv (above) or append --break-system-packages
 set -a; . ./.env; set +a
 LOCAL_MODEL_PATH="$PWD/models/local.gguf" DEBUG=1 \
 INPUT_PATH=tests/sample_input/tasks.json OUTPUT_PATH=output/results.json \

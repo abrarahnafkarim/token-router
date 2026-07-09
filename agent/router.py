@@ -128,92 +128,46 @@ class Router:
         return None
 
     # ------------------------------------------------------------ remote
-    def _pick_model(self, cat):
-        mapping = {
-            Cat.SENTIMENT: "accounts/fireworks/models/gemma-4-26b-a4b-it",
-            Cat.NER: "accounts/fireworks/models/gemma-4-26b-a4b-it",
-            Cat.FACTUAL: "accounts/fireworks/models/gemma-4-26b-a4b-it",
-            Cat.SUMMARY: "accounts/fireworks/models/gemma-4-26b-a4b-it",
-            Cat.MATH: "accounts/fireworks/models/gemma-4-31b-it-nvfp4",
-            Cat.LOGIC: "accounts/fireworks/models/gemma-4-31b-it-nvfp4",
-            Cat.CODEGEN: "accounts/fireworks/models/minimax-m3",
-            Cat.DEBUG: "accounts/fireworks/models/kimi-k2p7-code",
-        }
-        return mapping.get(cat)
-
-    def _fallback_models(self, cat):
-        """Return a list of models to try, primary first then fallbacks."""
-        primary = self._pick_model(cat)
-        candidates = []
-        if primary:
-            candidates.append(primary)
-        
-        # Add strong and language as fallbacks if the primary fails
-        strong = self.sel.get("strong")
-        language = self.sel.get("language")
-        if strong and strong not in candidates:
-            candidates.append(strong)
-        if language and language not in candidates:
-            candidates.append(language)
-            
-        for m in (self.sel.get("all") or []):
-            if m not in candidates:
-                candidates.append(m)
-                
-        allowed = set(self.sel.get("all") or [])
-        if allowed:
-            # But we must ensure the explicitly requested models are tried even if not dynamically selected by model_select
-            candidates = [m for m in candidates if (m in allowed or m == primary)]
-        return candidates
+    def _pick_model(self, plan):
+        m = self.sel.get("strong") if plan["hard"] else self.sel.get("language")
+        m = m or self.sel.get("strong") or self.sel.get("language")
+        if not m:
+            allm = self.sel.get("all") or []
+            m = allm[0] if allm else None
+        return m
 
     def _remote(self, cat, prompt, plan, rmax):
-        models = self._fallback_models(cat)
-        if not models or not (self.fw and self.fw.enabled):
+        model = self._pick_model(plan)
+        if not model or not (self.fw and self.fw.enabled):
+            return self._last_resort(cat, prompt)
+        allowed = set(self.sel.get("all") or [])
+        if allowed and model not in allowed:   # hard compliance guard
             return self._last_resort(cat, prompt)
         u = prompts.build(cat, prompt)
         json_mode = bool(plan.get("json")) and not V.prompt_wants_custom_format(prompt)
-        for model in models:
+        try:
+            txt = self.fw.chat(model, u, max_tokens=rmax, json_mode=json_mode)
+        except Exception:
+            return self._last_resort(cat, prompt)
+        ok, fixed = V.verify(cat, txt, prompt)
+        if ok:
+            return fixed
+        # NER structured retry, once, only if time clearly allows.
+        if cat == Cat.NER and json_mode and self.dl.hard_remaining() > 8:
             try:
-                txt = self.fw.chat(model, u, max_tokens=rmax, json_mode=json_mode)
+                txt2 = self.fw.chat(model, u, max_tokens=rmax, json_mode=True)
+                ok2, f2 = V.verify(cat, txt2, prompt)
+                if ok2:
+                    return f2
             except Exception:
-                continue  # try next model
-            ok, fixed = V.verify(cat, txt, prompt)
-            if ok:
-                return fixed
-            # NER structured retry, once, only if time clearly allows.
-            if cat == Cat.NER and json_mode and self.dl.hard_remaining() > 8:
-                try:
-                    txt2 = self.fw.chat(model, u, max_tokens=rmax, json_mode=True)
-                    ok2, f2 = V.verify(cat, txt2, prompt)
-                    if ok2:
-                        return f2
-                except Exception:
-                    pass
-            if txt.strip():
-                return txt.strip()
-        return self._last_resort(cat, prompt)
+                pass
+        return txt.strip() or self._last_resort(cat, prompt)
 
     # ------------------------------------------------------------ fallback
     def _last_resort(self, cat, prompt):
-        """Never leave an answer empty. Try every available remote model,
-        then a short local generation, then empty only if nothing is possible."""
-        plan = BASE_PLAN[cat]
-        if self.fw and self.fw.enabled and self.dl.hard_remaining() > 6:
-            models = self._fallback_models(cat)
-            allowed = set(self.sel.get("all") or [])
-            for model in models:
-                if allowed and model not in allowed:
-                    continue
-                try:
-                    txt = self.fw.chat(model, prompts.build(cat, prompt),
-                                       max_tokens=plan["rmax"])
-                    if txt.strip():
-                        _, fixed = V.verify(cat, txt, prompt)
-                        return fixed if fixed.strip() else txt.strip()
-                except Exception:
-                    continue
+        """Never leave an answer empty while any capacity remains."""
         if self.local and getattr(self.local, "ok", False):
-            gen_toks = min(96, plan["lmax"])
+            gen_toks = min(96, BASE_PLAN[cat]["lmax"])
             est = self.local.estimate(len(prompt) // 3, gen_toks)
             if self.dl.hard_remaining() > est + 2:
                 try:
@@ -221,4 +175,3 @@ class Router:
                 except Exception:
                     pass
         return ""
-

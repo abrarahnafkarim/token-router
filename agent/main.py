@@ -72,6 +72,18 @@ def main():
         log(f"[agent] fw_enabled={fw.enabled} allowed={len(allowed)} "
             f"strong={sel.get('strong')} language={sel.get('language')}")
 
+        if cfg.simple:
+            from .simple import run_simple
+            log("[agent] SIMPLE_MODE: accuracy-first clean passthrough")
+            answers = run_simple(tasks, fw, sel, dl)
+            log(f"[agent] model used: {getattr(run_simple, 'chosen_model', None)}")
+            write_results(cfg.output, tasks, answers)
+            filled = sum(1 for v in answers.values() if v)
+            log(f"[agent] done in {dl.elapsed():.1f}s | answered={filled}/{len(tasks)} "
+                f"remote calls={fw.calls} TOTAL_REMOTE_TOKENS={fw.total_tokens} "
+                f"errors={fw.errors}")
+            sys.exit(0)
+
         local = None
         if not cfg.force_remote and not cfg.local_disabled:
             lm = LocalLM(cfg.model_path, cfg.local_ctx)

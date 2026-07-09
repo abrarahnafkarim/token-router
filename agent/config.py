@@ -13,6 +13,8 @@ class Cfg:
         # Architecture B switch: skip local model entirely, pure Fireworks token-golf.
         self.force_remote = _flag("FORCE_REMOTE")
         self.local_disabled = _flag("LOCAL_DISABLED")
+        # Accuracy-first mode: clean passthrough to the strongest model.
+        self.simple = _flag("SIMPLE_MODE")
         self.model_path = os.environ.get("LOCAL_MODEL_PATH", "/app/models/local.gguf")
         self.local_ctx = int(os.environ.get("LOCAL_CTX", "8192"))
         # Time budget: finish comfortably inside the 10-minute hard cap.

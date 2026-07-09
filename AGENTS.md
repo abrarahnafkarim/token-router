@@ -1,11 +1,5 @@
 # Standing rules for the coding agent (Google Antigravity)
 
-0. Host is Ubuntu 24.04. Before Stage 1, ensure prerequisites exist:
-   `build-essential`, `cmake`, and `docker buildx`. If `docker buildx version`
-   fails, install `docker-buildx-plugin`. Never run `pip install` against the
-   system Python (24.04 blocks it via PEP 668) — always use the Stage 4 venv,
-   or `--break-system-packages` only if a venv is impossible. The Docker build
-   (Stage 5+) needs none of this on the host.
 1. Execute README.md stages strictly in order. Stop after each stage and
    wait for the user's review before continuing.
 2. NEVER modify files under `agent/` unless the user explicitly asks.
