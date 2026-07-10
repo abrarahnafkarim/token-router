@@ -38,10 +38,10 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Download Qwen2.5-14B Model
+      - name: Download Qwen2.5-7B Model
         run: |
           mkdir -p models
-          wget -q --show-progress -O models/local.gguf https://huggingface.co/bartowski/Qwen2.5-14B-Instruct-GGUF/resolve/main/Qwen2.5-14B-Instruct-Q4_K_M.gguf
+          wget -q --show-progress -O models/local.gguf https://huggingface.co/bartowski/Qwen2.5-7B-Instruct-GGUF/resolve/main/Qwen2.5-7B-Instruct-Q4_K_M.gguf
 
       - name: Train DistilBERT Router
         run: |
