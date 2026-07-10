@@ -87,18 +87,24 @@ class Router:
     def _local_eligible(self, cat, prompt, plan, tasks_left, lmax):
         if not self.local or self.cfg.force_remote:
             return False
-        
-        # Use fine-tuned DistilBERT router to classify "easy" vs "hard" locally for zero tokens
+
+        # ── Three-tier DistilBERT routing (zero tokens) ──
+        # "easy"      → proceed to local model confidently
+        # "uncertain" → try local but force agreement verification
+        # "hard"      → skip local entirely, escalate to remote
         try:
             from .infer_router import predict
-            if predict(prompt) == "hard":
-                return False  # Force escalation to remote models
+            tier = predict(prompt)
+            if tier == "hard":
+                return False          # straight to remote
+            if tier == "uncertain":
+                plan["agree"] = True  # force double-check even for easy cats
         except Exception:
-            pass  # Fall back to heuristic check if DistilBERT is missing/fails
+            pass  # DistilBERT missing/broken → fall through to heuristics
 
         if cat.value in self.cfg.remote_cats:
             return False
-        ptoks = len(prompt) // 3  # conservative chars->tokens estimate
+        ptoks = len(prompt) // 3  # conservative chars→tokens estimate
         if ptoks > self.cfg.local_ctx - lmax - 64:
             return False          # too long for local context: go remote
         mult = 2 if plan["agree"] else 1

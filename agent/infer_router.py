@@ -27,25 +27,40 @@ def _load():
     _model.eval()
 
 
-# Confidence threshold: only classify as "hard" when the model is at least
-# this confident.  Raising this reduces false-positives (easy prompts sent
-# to the expensive remote model, wasting tokens) at the cost of potentially
-# missing some genuinely hard prompts.  0.65 is a good balance: the training
-# metrics showed recall=1.0 / precision=0.20, so we can afford to tighten.
-HARD_THRESHOLD = 0.65
+# ── Three-tier confidence thresholds ──
+# hard_prob < EASY_CEIL  → "easy"      — safe for local model, 0 remote tokens
+# EASY_CEIL ≤ hard_prob < HARD_FLOOR → "uncertain" — local attempt, but verify
+# hard_prob ≥ HARD_FLOOR → "hard"      — skip local, go straight to remote
+EASY_CEIL  = 0.30
+HARD_FLOOR = 0.65
 
 
 def predict(prompt: str) -> str:
-    """Returns "easy" or "hard" using confidence-based thresholding."""
+    """Returns "easy", "uncertain", or "hard"."""
     _load()
     enc = _tokenizer(prompt, truncation=True, padding=True, max_length=256, return_tensors="pt").to(_device)
     with torch.no_grad():
         logits = _model(**enc).logits
     probs = torch.softmax(logits, dim=-1)
-    hard_prob = probs[0, 1].item()     # probability of "hard"
-    return "hard" if hard_prob >= HARD_THRESHOLD else "easy"
+    hard_prob = probs[0, 1].item()
+    if hard_prob >= HARD_FLOOR:
+        return "hard"
+    if hard_prob >= EASY_CEIL:
+        return "uncertain"
+    return "easy"
+
+
+def confidence(prompt: str) -> float:
+    """Returns raw probability the prompt is 'hard' (0.0–1.0)."""
+    _load()
+    enc = _tokenizer(prompt, truncation=True, padding=True, max_length=256, return_tensors="pt").to(_device)
+    with torch.no_grad():
+        logits = _model(**enc).logits
+    return torch.softmax(logits, dim=-1)[0, 1].item()
 
 
 if __name__ == "__main__":
     import sys
-    print(predict(sys.argv[1] if len(sys.argv) > 1 else "What is 2 + 2?"))
+    q = sys.argv[1] if len(sys.argv) > 1 else "What is 2 + 2?"
+    print(f"label={predict(q)}  hard_prob={confidence(q):.3f}")
+
