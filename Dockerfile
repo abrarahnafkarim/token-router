@@ -14,7 +14,7 @@ FROM python:3.11-slim AS builder
 RUN apt-get update && apt-get install -y --no-install-recommends \
         build-essential cmake git \
     && rm -rf /var/lib/apt/lists/*
-ENV CMAKE_ARGS="-DGGML_NATIVE=OFF -DGGML_AVX2=ON" \
+ENV CMAKE_ARGS="-DGGML_NATIVE=OFF" \
     FORCE_CMAKE=1
 RUN python -m venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
@@ -28,10 +28,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends libgomp1 \
 COPY --from=builder /opt/venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
 WORKDIR /app
-# Models layer FIRST (9 GB, rarely changes → stays cached across code edits)
+# Models layer FIRST (rarely changes → stays cached across code edits)
 COPY models/ ./models/
 # Agent code LAST (tiny, changes often → fast rebuild)
 COPY agent/ ./agent/
+COPY entrypoint.sh ./entrypoint.sh
+RUN chmod +x ./entrypoint.sh
 
 # ---- tuning knobs (day-of changes happen HERE; the harness only injects ----
 # ---- FIREWORKS_API_KEY, FIREWORKS_BASE_URL, ALLOWED_MODELS)             ----
@@ -43,10 +45,11 @@ ENV LOCAL_MODEL_PATH=/app/models/local.gguf \
     SIMPLE_MAX_TOKENS=2048 \
     MIN_TPS=0.3 \
     WEAK_TPS=4 \
-    LOCAL_CTX=8192
+    LOCAL_CTX=2048
 # Architecture B (pure Fireworks token-golf): uncomment to flip.
 # ENV FORCE_REMOTE=1
 # Force specific categories remote regardless of local speed, e.g.:
 # ENV REMOTE_CATS=math,logic
 
-ENTRYPOINT ["python", "-m", "agent.main"]
+ENTRYPOINT ["/app/entrypoint.sh"]
+CMD []

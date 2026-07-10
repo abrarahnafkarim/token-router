@@ -86,19 +86,23 @@ def main():
 
         local = None
         if not cfg.force_remote and not cfg.local_disabled:
-            lm = LocalLM(cfg.model_path, cfg.local_ctx)
-            if lm.ok:
-                lm.warmup()
-            if lm.ok and lm.tps >= cfg.min_tps:
-                local = lm
-                if lm.tps < cfg.weak_tps:
-                    cfg.remote_cats |= {"math", "logic", "code_debug", "code_generation"}
-                    log(f"[agent] weak local ({lm.tps:.1f} tps): hard categories -> remote")
+            try:
+                lm = LocalLM(cfg.model_path, cfg.local_ctx)
+                if lm.ok:
+                    lm.warmup()
+                if lm.ok and lm.tps >= cfg.min_tps:
+                    local = lm
+                    if lm.tps < cfg.weak_tps:
+                        cfg.remote_cats |= {"math", "logic", "code_debug", "code_generation"}
+                        log(f"[agent] weak local ({lm.tps:.1f} tps): hard categories -> remote")
+                    else:
+                        log(f"[agent] local ready ({lm.tps:.1f} tps)")
                 else:
-                    log(f"[agent] local ready ({lm.tps:.1f} tps)")
-            else:
-                log(f"[agent] local unavailable ({lm.err or f'slow: {lm.tps:.1f} tps'}) "
-                    f"-> pure Fireworks mode")
+                    log(f"[agent] local unavailable ({lm.err or f'slow: {lm.tps:.1f} tps'}) "
+                        f"-> pure Fireworks mode")
+            except Exception as e:
+                log(f"[agent] local unavailable (error: {e}) -> pure Fireworks mode")
+                local = None
 
         router = Router(cfg, local, fw, sel, dl)
         answers = router.solve_all(tasks)
