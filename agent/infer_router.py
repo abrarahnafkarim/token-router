@@ -6,25 +6,30 @@ fine-tuning a router instead of asking an LLM to classify difficulty.
 """
 from pathlib import Path
 
-import torch
-from transformers import DistilBertTokenizerFast, DistilBertForSequenceClassification
-
 # The checkpoint is built into the image at /app/models/router-distilbert
 CHECKPOINT_DIR = Path("/app/models/router-distilbert")
 
 _model = None
 _tokenizer = None
 _device = None
+_disabled = False
 
 
 def _load():
-    global _model, _tokenizer, _device
-    if _model is not None:
+    global _model, _tokenizer, _device, _disabled
+    if _model is not None or _disabled:
         return
-    _device = torch.device("mps") if torch.backends.mps.is_available() else torch.device("cpu")
-    _tokenizer = DistilBertTokenizerFast.from_pretrained(CHECKPOINT_DIR)
-    _model = DistilBertForSequenceClassification.from_pretrained(CHECKPOINT_DIR).to(_device)
-    _model.eval()
+    try:
+        import torch
+        from transformers import DistilBertTokenizerFast, DistilBertForSequenceClassification
+        _device = torch.device("mps") if torch.backends.mps.is_available() else torch.device("cpu")
+        _tokenizer = DistilBertTokenizerFast.from_pretrained(CHECKPOINT_DIR)
+        _model = DistilBertForSequenceClassification.from_pretrained(CHECKPOINT_DIR).to(_device)
+        _model.eval()
+    except Exception as e:
+        import sys
+        print(f"[infer_router] disabled: {e}", file=sys.stderr, flush=True)
+        _disabled = True
 
 
 # ── Three-tier confidence thresholds ──
@@ -38,6 +43,9 @@ HARD_FLOOR = 0.65
 def predict(prompt: str) -> str:
     """Returns "easy", "uncertain", or "hard"."""
     _load()
+    if _disabled:
+        return "uncertain"
+    import torch
     enc = _tokenizer(prompt, truncation=True, padding=True, max_length=256, return_tensors="pt").to(_device)
     with torch.no_grad():
         logits = _model(**enc).logits
@@ -53,6 +61,9 @@ def predict(prompt: str) -> str:
 def confidence(prompt: str) -> float:
     """Returns raw probability the prompt is 'hard' (0.0–1.0)."""
     _load()
+    if _disabled:
+        return 0.5
+    import torch
     enc = _tokenizer(prompt, truncation=True, padding=True, max_length=256, return_tensors="pt").to(_device)
     with torch.no_grad():
         logits = _model(**enc).logits
@@ -63,4 +74,3 @@ if __name__ == "__main__":
     import sys
     q = sys.argv[1] if len(sys.argv) > 1 else "What is 2 + 2?"
     print(f"label={predict(q)}  hard_prob={confidence(q):.3f}")
-

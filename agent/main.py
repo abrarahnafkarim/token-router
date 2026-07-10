@@ -16,13 +16,6 @@ import os
 import sys
 import traceback
 
-from .config import Cfg
-from .deadline import Deadline
-from .fireworks_client import Fireworks
-from .local_model import LocalLM
-from .model_select import choose, parse_allowed
-from .router import Router
-
 
 def log(*a):
     print(*a, file=sys.stderr, flush=True)
@@ -59,6 +52,15 @@ def write_results(path, tasks, answers):
 
 
 def main():
+    # Import heavy modules lazily — inside main() — so any import crash
+    # is caught by the outer try/except and we still write results.json.
+    from .config import Cfg
+    from .deadline import Deadline
+    from .fireworks_client import Fireworks
+    from .local_model import LocalLM
+    from .model_select import choose, parse_allowed
+    from .router import Router
+
     cfg = Cfg()
     dl = Deadline(cfg.time_limit, cfg.reserve)
     tasks = []

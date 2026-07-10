@@ -1,14 +1,23 @@
 #!/usr/bin/env bash
-set -e
+# Universal entrypoint for hackathon evaluation runners.
+# Handles: direct invocation, shell-wrapped invocation, positional args.
+# Does NOT use set -e — we want Python's own error handling to run.
 
-# If the first argument is an explicit command executable (python, python3, /bin/sh, /bin/bash, sh, bash), execute it directly
-if [ "$1" = "python" ] || [ "$1" = "python3" ] || [ "$1" = "/bin/sh" ] || [ "$1" = "/bin/bash" ] || [ "$1" = "sh" ] || [ "$1" = "bash" ]; then
-    exec "$@"
+# If the runner passes an explicit interpreter/shell command, exec it directly.
+case "$1" in
+    python|python3|/bin/sh|/bin/bash|sh|bash)
+        exec "$@"
+        ;;
+esac
+
+# Find the python binary available in this image.
+if command -v python >/dev/null 2>&1; then
+    PY=python
+elif command -v python3 >/dev/null 2>&1; then
+    PY=python3
+else
+    echo "FATAL: no python found" >&2
+    exit 1
 fi
 
-PY_CMD="python"
-if ! command -v python >/dev/null 2>&1; then
-    PY_CMD="python3"
-fi
-
-exec "$PY_CMD" -m agent.main "$@"
+exec "$PY" -m agent.main "$@"
