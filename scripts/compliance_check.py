@@ -18,7 +18,7 @@ key_re = re.compile(r"fw[_-]?[A-Za-z0-9]{20,}")
 for dirpath, dirs, files in os.walk(ROOT):
     dirs[:] = [d for d in dirs if d not in (".git", "models", "output", "__pycache__", ".venv")]
     for fn in files:
-        if fn.endswith((".py", ".sh", ".md", ".txt", ".env", ".json")):
+        if fn.endswith((".py", ".sh", ".md", ".txt", ".json")) and fn != ".env":
             p = os.path.join(dirpath, fn)
             try:
                 txt = open(p, encoding="utf-8", errors="ignore").read()

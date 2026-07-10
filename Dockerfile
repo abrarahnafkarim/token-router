@@ -28,8 +28,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends libgomp1 \
 COPY --from=builder /opt/venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
 WORKDIR /app
-COPY agent/ ./agent/
+# Models layer FIRST (9 GB, rarely changes → stays cached across code edits)
 COPY models/ ./models/
+# Agent code LAST (tiny, changes often → fast rebuild)
+COPY agent/ ./agent/
 
 # ---- tuning knobs (day-of changes happen HERE; the harness only injects ----
 # ---- FIREWORKS_API_KEY, FIREWORKS_BASE_URL, ALLOWED_MODELS)             ----

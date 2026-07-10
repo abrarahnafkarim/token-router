@@ -56,5 +56,5 @@ jobs:
           push: true
           platforms: linux/amd64
           tags: ghcr.io/abrarahnafkarim/token-router:latest
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          provenance: false
+          sbom: false

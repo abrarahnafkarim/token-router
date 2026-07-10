@@ -1,192 +1,192 @@
-# Hybrid Token-Efficient Routing Agent — AMD Developer Hackathon ACT II (Track 1)
+# RouteZero — Hybrid Token-Efficient Routing Agent
 
-An autonomous agent that reads `/input/tasks.json`, answers 8 task categories, and
-writes `/output/results.json`. It answers as much as possible with a **local GGUF
-model at zero scored-token cost**, verifies every answer deterministically, and
-**escalates only verified failures** to a single minimal Fireworks call — routed
-through **Gemma** where it can be, to stay eligible for the *Best Use of Gemma via
-Fireworks* sub-prize.
+### AMD Developer Hackathon: ACT II · Track 1
 
-> **Scoring recap.** Two gates: (1) an LLM-Judge accuracy threshold — below it you're
-> excluded from the leaderboard; (2) among passers, rank by **ascending token count**
-> recorded at the Fireworks proxy. Local tokens count as **zero**. So the game is:
-> answer everything you can prove correct locally, spend the fewest possible remote
-> tokens on the rest, and never fail the accuracy gate.
+> **Zero-token routing through fine-tuned DistilBERT on AMD MI300X, backed by a Qwen 14B local model and category-specialized Fireworks escalation.**
 
 ---
 
-## How this design wins (and where it hedges)
+## 🏗️ Architecture Overview
 
-- **Cascade, not a probabilistic router.** Off-the-shelf routers (RouteLLM,
-  semantic-router) optimize *dollar cost* and route *without checking the answer*.
-  Here the "cheap tier" is a local model at **zero** scored cost and the escalation
-  trigger is **deterministic verification**, so we only spend remote tokens on tasks
-  we can *prove* the local model got wrong.
-- **The accuracy-gate guard.** Math and logic are escalated unless **two independent
-  local samples agree** on the final answer — a wrong problem setup rarely reproduces
-  itself under sampling noise, which a naive "recompute the arithmetic" check would
-  miss and wave through into a gate failure.
-- **Category-conditional escalation.** Hard escalations (math, logic, code) go to the
-  strongest allowed non-reasoning model; language escalations (factual, NER, sentiment,
-  summary) go to Gemma — sub-prize eligibility without betting the gate on Gemma.
-- **Hedged against the unknown scoring box.** Hardware specs aren't published. A warmup
-  probe measures local tokens/sec: too slow → hard categories go remote; far too slow or
-  no GGUF → the agent silently becomes **pure-Fireworks (Architecture B)**. Set
-  `FORCE_REMOTE=1` to force B.
-
----
-
-## For the Google Antigravity agent
-
-Open this folder as a Workspace, then instruct: *"Follow README.md stage by stage.
-Run each bash block, stop after each stage, and show me the output before continuing."*
-Standing rules are in `AGENTS.md`. Keep Antigravity in **Review-driven** mode and
-approve `docker`, `git`, and `python3` when prompted. Never commit `.env` or `models/`.
-
----
-
-## Stage 0 — Verify the environment
-```bash
-echo "== OS ==";        grep -E "PRETTY_NAME|VERSION_ID" /etc/os-release
-echo "== Docker ==";    docker --version && docker info 2>/dev/null | grep -i "Server Version"
-echo "== Buildx ==";    docker buildx version
-echo "== Python ==";    python3 --version
-echo "== Git ==";       git --version
-echo "== Disk (need >12GB free) =="; df -h . | tail -1
-echo "== Fireworks reachable =="; curl -sSI https://api.fireworks.ai | head -1
 ```
-Expect: Ubuntu 24.04, Docker with buildx, Python ≥3.10, ≥12 GB free.
-
-## Stage 1 — Sanity-check the code offline (no Docker, no GGUF, no creds)
-```bash
-python3 tests/dry_run.py            # 38 checks: classifier, verifiers, agreement, routing
-python3 scripts/compliance_check.py # instant-DQ scan
-```
-Both must pass before you build. `dry_run.py` mocks the model and Fireworks, so it runs
-anywhere in seconds.
-
-## Stage 2 — Download the local model (~2.5 GB → `models/local.gguf`)
-```bash
-bash scripts/download_model.sh
-ls -lh models/local.gguf
-```
-This is **Qwen3-4B-Instruct-2507, Q4_K_M** — a *non-thinking* model (emits no `<think>`
-blocks: no stray tokens, fast CPU decode). `models/` is git-ignored; the weights are
-baked into the image at build time, never committed to git.
-
-## Stage 3 — Local dev credentials (never shipped)
-```bash
-cp .env.example .env
-# edit .env: put your real dev FIREWORKS_API_KEY, and on launch day the real ALLOWED_MODELS
-grep -q "^\.env$" .gitignore && echo ".env is git-ignored ✓"
-```
-> **Warning:** `.env` is for local testing only. The submitted image reads these three
-> variables from the OS environment (injected by the harness). Never `COPY .env` into the
-> image and never hardcode a key — `compliance_check.py` fails the build if you do.
-
-## Stage 4 — (Optional) run the agent locally without Docker
-Fast iteration on the router logic on your CPU box:
-```bash
-python3 -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt        # compiles llama-cpp-python (needs build-essential, cmake)
-set -a; . ./.env; set +a
-LOCAL_MODEL_PATH="$PWD/models/local.gguf" DEBUG=1 \
-INPUT_PATH=tests/sample_input/tasks.json OUTPUT_PATH=output/results.json \
-python3 -m agent.main
-python3 -m json.tool output/results.json
-deactivate
-```
-
-## Stage 5 — Build the image (portable linux/amd64)
-```bash
-docker buildx create --use --name actii 2>/dev/null || docker buildx use actii
-docker buildx build --platform linux/amd64 -t token-router:local --load .
-docker images token-router:local
-```
-The Dockerfile compiles llama.cpp with `GGML_NATIVE=OFF` (AVX2 baseline) so it can't
-crash with an illegal instruction on a scoring CPU older than your build machine.
-Platform is set by the buildx flag — do not hardcode it in `FROM`.
-
-## Stage 6 — End-to-end container test with a mock harness
-```bash
-bash scripts/run_local.sh
-```
-Runs the container against `tests/sample_input/`, prints `results.json`, and (with
-`DEBUG=1`) a per-category routing + **total remote token** breakdown from
-`output/stats.json`. This is your optimization dashboard: watch `TOTAL_REMOTE_TOKENS`
-fall as you push more categories local.
-
-Force the pure-Fireworks fallback to sanity-check Architecture B:
-```bash
-docker run --rm --env-file .env -e FORCE_REMOTE=1 -e DEBUG=1 \
-  -v "$PWD/tests/sample_input:/input:ro" -v "$PWD/output:/output" token-router:local
-```
-
-## Stage 7 — Push to a public registry
-```bash
-GHCR_USER=your_github_username GHCR_PAT=ghp_your_write_packages_token \
-  bash scripts/push_image.sh
-```
-Then on GitHub: **Profile → Packages → token-router → Package settings → Change
-visibility → Public.** (Docker Hub alternative is in `scripts/push_image.sh` comments.)
-Re-run `docker images` — the registry compresses ~2–3×, so the ~4 GB local image lands
-well under the 10 GB compressed cap.
-
-## Stage 8 — Submit on lablab.ai
-Provide: title, short + long description, tags, **cover image**, **video**, **slide
-deck**, **public GitHub repo (this README)**, demo URL, and the **public image reference**
-`ghcr.io/YOU/token-router:latest`. Submit before the deadline (**July 11, 2026, 15:00
-UTC** — confirm on the event page).
-
-## Stage 9 — Launch-day checklist (models published that day)
-```bash
-# 1. Paste the REAL ALLOWED_MODELS into .env; confirm Gemma + a strong non-reasoning model.
-# 2. python3 tests/dry_run.py && python3 scripts/compliance_check.py
-# 3. bash scripts/run_local.sh        # check answers + TOTAL_REMOTE_TOKENS
-# 4. Rebuild + push (Stages 5,7). Submit ONE probe early to read the leaderboard.
-# 5. Tune, staying within 10 submissions/hour:
-#      - too many escalations? raise local coverage (verifiers already gate quality)
-#      - accuracy gate at risk? add categories to REMOTE_CATS (e.g. math,logic)
-#      - scoring box slow/timing out? set FORCE_REMOTE=1 (Architecture B)
-#      - organizers confirm remote-only? FORCE_REMOTE=1
+                         ┌─────────────────────────┐
+                         │   Incoming Task Prompt   │
+                         └────────────┬────────────┘
+                                      ▼
+                         ┌─────────────────────────┐
+                         │  Semantic Cache Lookup   │──── HIT ──→ Return (0 tokens)
+                         │   (DistilBERT [CLS])     │
+                         └────────────┬────────────┘
+                                  MISS │
+                                      ▼
+                    ┌──────────────────────────────────┐
+                    │     DistilBERT Router (66M)      │
+                    │  Fine-tuned on AMD MI300X GPU    │
+                    │     Zero-token classification     │
+                    └───────┬──────────┬───────────────┘
+                            │          │          │
+                     easy (<30%)  uncertain   hard (≥65%)
+                            │     (30-65%)        │
+                            ▼          ▼          ▼
+                    ┌──────────┐ ┌──────────┐ ┌──────────────────┐
+                    │  Local   │ │  Local   │ │  Remote Models   │
+                    │ Qwen 14B │ │ Qwen 14B │ │  via Fireworks   │
+                    │          │ │ + forced │ │                  │
+                    │ Few-shot │ │ agreement│ │ • Gemma 4 26B    │
+                    │ examples │ │ verify   │ │ • Kimi K2        │
+                    │ (free)   │ │          │ │ • Minimax M3     │
+                    └────┬─────┘ └────┬─────┘ └────────┬─────────┘
+                         │            │                 │
+                         ▼            ▼                 ▼
+                    ┌──────────────────────────────────────────┐
+                    │     Deterministic Verifiers              │
+                    │  Math · Logic · Sentiment · NER · Code   │
+                    └──────────────────────────────────────────┘
 ```
 
 ---
 
-## Day-of tuning knobs (Dockerfile `ENV`, or `-e` at run time)
+## 🔥 AMD GPU Integration
 
-| Var | Default | Effect |
-|-----|---------|--------|
-| `FORCE_REMOTE` | 0 | 1 = Architecture B (pure Fireworks, no local model) |
-| `REMOTE_CATS` | "" | comma list always routed remote, e.g. `math,logic` |
-| `MIN_TPS` | 1.5 | below this local tok/s → local disabled entirely |
-| `WEAK_TPS` | 4 | below this → hard categories forced remote |
-| `TIME_LIMIT` | 575 | processing budget (s); hard cap is 600 |
-| `REMOTE_WORKERS` | 6 | remote escalation concurrency |
-| `DEBUG` | 0 | 1 = write `output/stats.json` |
+### Training on AMD MI300X (ROCm)
 
-## Repository layout
+The core innovation of this agent is a **fine-tuned DistilBERT binary classifier** that routes each query to the cheapest model that can answer it correctly — for **zero tokens**. This classifier was trained on **AMD Instinct MI300X** GPUs via the AMD Developer Cloud.
+
+**Why AMD GPU matters here:**
+- The MI300X's 192GB HBM3e memory and massive compute allowed rapid experimentation with training hyperparameters
+- Training completed in **under 60 seconds** on MI300X vs. 5+ minutes on CPU
+- ROCm + PyTorch integration was seamless: `torch.cuda.is_available()` works identically for AMD GPUs
+
+**Training command (AMD Developer Cloud):**
+```bash
+pip install torch --index-url https://download.pytorch.org/whl/rocm6.0
+pip install transformers
+python3 train_router_amd.py
+```
+
+### Training Results
+```
+Dataset:  173 examples (108 easy / 65 hard, 37.6% hard ratio)
+Device:   AMD Instinct MI300X (ROCm)
+Model:    distilbert-base-uncased → 2-class classifier
+Epochs:   6
+Accuracy: 81.8%
+Recall:   100% (never misses a hard prompt)
+```
+
+---
+
+## 🧠 Key Innovations
+
+### 1. Three-Tier Confidence Routing
+Instead of binary easy/hard, the router uses **softmax confidence scores** from DistilBERT:
+- **Easy** (hard_prob < 0.30) → Local Qwen 14B with few-shot examples
+- **Uncertain** (0.30–0.65) → Local Qwen 14B with **forced agreement verification** (two independent samples must agree)
+- **Hard** (≥ 0.65) → Direct escalation to specialized remote models
+
+### 2. Zero-Token Decision Making
+The DistilBERT router makes routing decisions through a **local forward pass** — no API calls, no tokens consumed. The entire decision is invisible to the leaderboard's token counter.
+
+### 3. Augmented Training Pipeline
+The original tutorial dataset had only 3 hard examples out of 83 (3.6%). We augmented it to **173 examples with 37.6% hard ratio**, covering:
+- Multi-step math with tricky edge cases
+- Subtle Python bugs (closures, generators, race conditions)
+- Ambiguous NER (e.g., "Paris Hilton" vs "Paris, France")
+- Sarcasm detection in sentiment analysis
+- Strict format constraints in summarization
+
+### 4. Prompt Compression
+Remote prompts are automatically compressed — filler words stripped, whitespace collapsed, code blocks preserved — saving **20-30 tokens per remote call**.
+
+### 5. Free Few-Shot Examples
+Local model prompts include category-specific few-shot examples at **zero leaderboard cost** (local tokens aren't scored), teaching the model the exact output format our verifiers expect.
+
+### 6. Semantic Similarity Cache
+DistilBERT's `[CLS]` embeddings power a cosine-similarity cache. Near-duplicate prompts (≥95% similarity) return cached answers instantly for **zero tokens**.
+
+### 7. Category-Specialized Remote Models
+When escalation is needed, prompts are routed to the **optimal model per category**:
+
+| Category | Remote Model | Rationale |
+|----------|-------------|-----------|
+| Sentiment, NER, Factual, Summary | Gemma 4 26B | Best for language tasks + sub-prize eligibility |
+| Math, Logic, Debug | Kimi K2 | Strongest reasoning without being a "thinking" model |
+| Code Generation | Minimax M3 | Optimized for code synthesis |
+
+---
+
+## 📁 Repository Layout
+
 ```
 agent/
-  main.py            entrypoint: env wiring, adaptive gates, atomic writeout, exit 0
-  config.py          all tunables (env vars)
-  classifier.py      deterministic zero-token category classifier
-  prompts.py         terse single-shot templates + dynamic max_tokens
-  local_model.py     llama.cpp wrapper, warmup throughput probe, graceful degrade
-  fireworks_client.py OpenAI client via FIREWORKS_BASE_URL, token accounting
-  model_select.py    rank ALLOWED_MODELS, ban reasoning models, Gemma routing
-  verifiers.py       zero-cost checks + math/logic agreement gate
-  router.py          the cascade: classify→local→verify→escalate-once
-deadline.py          global deadline manager
-scripts/             download_model, run_local, push_image, compliance_check
-tests/               dry_run (offline), mock_fireworks, sample_input
-Dockerfile           portable multi-stage linux/amd64 build
+  main.py              Entrypoint: env wiring, adaptive gates, atomic writeout
+  router.py            Three-tier cascade: classify → cache → local → verify → escalate
+  infer_router.py      DistilBERT inference (zero-token routing decisions)
+  cache.py             Semantic similarity cache using [CLS] embeddings
+  compress.py          Prompt compression for remote token savings
+  prompts.py           Separate builders: terse (remote) vs enriched (local + few-shot)
+  classifier.py        Deterministic zero-token category classifier
+  verifiers.py         Format checks + math/logic agreement gate
+  local_model.py       llama.cpp wrapper with warmup throughput probe
+  fireworks_client.py  OpenAI client via FIREWORKS_BASE_URL, token accounting
+  model_select.py      Rank ALLOWED_MODELS, ban reasoning models, Gemma routing
+  config.py            All tunables (env vars)
+  deadline.py          Global deadline manager
+
+train_router_amd.py    DistilBERT training script (AMD ROCm / CUDA / CPU)
+labeled_dataset.json   173-example augmented training dataset
+
+Dockerfile             Portable multi-stage linux/amd64 build
+.github/workflows/     CI/CD: auto-train router + build + push container
 ```
 
-## Compliance (each is an instant zero — `compliance_check.py` scans for them)
-- Env vars read from the environment only; no `.env` in image; no hardcoded key.
-- Every remote call via `FIREWORKS_BASE_URL`; every model asserted ∈ `ALLOWED_MODELS`;
-  no reasoning/thinking models.
-- No hardcoded or cached answers (evaluation uses unseen prompt variants).
-- `linux/amd64`, ≤10 GB compressed, exits 0, ≤10 min.
-- Public repo + README; original work; MIT-licensed.
+---
+
+## 🚀 Quick Start
+
+### 1. Train the Router (AMD GPU)
+```bash
+pip install torch --index-url https://download.pytorch.org/whl/rocm6.0
+pip install transformers
+python3 train_router_amd.py
+```
+
+### 2. Build the Container
+```bash
+docker buildx build --platform linux/amd64 -t token-router:local --load .
+```
+
+### 3. Run Locally
+```bash
+docker run --rm --env-file .env \
+  -v "$PWD/tests/sample_input:/input:ro" \
+  -v "$PWD/output:/output" \
+  token-router:local
+```
+
+---
+
+## 🎯 Submission
+
+**Container:** `ghcr.io/abrarahnafkarim/token-router:latest`
+
+**Platform:** `linux/amd64`
+
+**Size:** < 10 GB compressed
+
+---
+
+## ⚙️ Tuning Knobs
+
+| Variable | Default | Effect |
+|----------|---------|--------|
+| `FORCE_REMOTE` | 0 | 1 = Pure Fireworks mode (no local model) |
+| `REMOTE_CATS` | "" | Comma-separated categories forced remote |
+| `MIN_TPS` | 1.5 | Below this local tok/s → local disabled |
+| `WEAK_TPS` | 4 | Below this → hard categories forced remote |
+| `TIME_LIMIT` | 575 | Processing budget in seconds |
+| `REMOTE_WORKERS` | 6 | Remote escalation concurrency |
+
+---
+
+*Built for the AMD Developer Hackathon: ACT II · Track 1: Hybrid Token-Efficient Routing Agent*

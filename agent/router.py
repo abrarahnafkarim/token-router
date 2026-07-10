@@ -21,16 +21,18 @@ from concurrent.futures import ThreadPoolExecutor
 from . import prompts
 from . import verifiers as V
 from .classifier import Cat, classify
+from .cache import lookup as cache_lookup, store as cache_store
+from .compress import compress
 
 BASE_PLAN = {
-    Cat.FACTUAL:   dict(agree=False, lmax=120, rmax=110, hard=False),
-    Cat.MATH:      dict(agree=True,  lmax=230, rmax=190, hard=True),
-    Cat.SENTIMENT: dict(agree=False, lmax=48,  rmax=48,  hard=False),
-    Cat.SUMMARY:   dict(agree=False, lmax=150, rmax=150, hard=False),
-    Cat.NER:       dict(agree=False, lmax=150, rmax=150, hard=False, json=True),
-    Cat.DEBUG:     dict(agree=False, lmax=360, rmax=340, hard=True),
-    Cat.CODEGEN:   dict(agree=False, lmax=330, rmax=310, hard=True),
-    Cat.LOGIC:     dict(agree=True,  lmax=230, rmax=210, hard=True),
+    Cat.FACTUAL:   dict(agree=False, lmax=120, rmax=80,  hard=False),
+    Cat.MATH:      dict(agree=True,  lmax=230, rmax=160, hard=True),
+    Cat.SENTIMENT: dict(agree=False, lmax=48,  rmax=36,  hard=False),
+    Cat.SUMMARY:   dict(agree=False, lmax=150, rmax=120, hard=False),
+    Cat.NER:       dict(agree=False, lmax=150, rmax=120, hard=False, json=True),
+    Cat.DEBUG:     dict(agree=False, lmax=360, rmax=300, hard=True),
+    Cat.CODEGEN:   dict(agree=False, lmax=330, rmax=280, hard=True),
+    Cat.LOGIC:     dict(agree=True,  lmax=230, rmax=180, hard=True),
 }
 
 
@@ -58,8 +60,12 @@ class Router:
             lmax = prompts.max_tokens_for(cat, prompt, plan["lmax"])
             rmax = prompts.max_tokens_for(cat, prompt, plan["rmax"])
 
+            # ── Cache check (zero tokens) ──
             ans, path = None, "local"
-            if self._local_eligible(cat, prompt, plan, tasks_left, lmax):
+            cached = cache_lookup(prompt)
+            if cached is not None:
+                ans, path = cached, "cache"
+            elif self._local_eligible(cat, prompt, plan, tasks_left, lmax):
                 ans = self._try_local(cat, prompt, plan, lmax)
             if ans is None:
                 if self.pool and self.dl.hard_remaining() > 6:
@@ -71,11 +77,14 @@ class Router:
                     path = "fallback"
             if ans is not None:
                 out[tid] = ans
+                cache_store(prompt, ans)
             self.stats.append(dict(task_id=tid, category=cat.value, path=path))
 
         for tid, (f, cat, prompt) in futs.items():
             try:
-                out[tid] = f.result(timeout=max(3.0, self.dl.hard_remaining() - 2))
+                result = f.result(timeout=max(3.0, self.dl.hard_remaining() - 2))
+                out[tid] = result
+                cache_store(prompt, result)
             except Exception:
                 f.cancel()
                 out[tid] = self._last_resort(cat, prompt)
@@ -112,7 +121,7 @@ class Router:
         return self.dl.affordable(est, tasks_left)
 
     def _try_local(self, cat, prompt, plan, lmax):
-        u = prompts.build(cat, prompt)
+        u = prompts.build_local(cat, prompt)
         try:
             a1 = self.local.gen(u, lmax, 0.0)
         except Exception:
@@ -156,28 +165,59 @@ class Router:
         }
         return mapping.get(cat)
 
+    def _gemma_system_prompt(self, cat):
+        systems = {
+            Cat.MATH: "You are a precise math solver. Solve step by step and verify your arithmetic. The final line must be exactly 'Answer: <number>'.",
+            Cat.LOGIC: "You are a logic puzzle expert. Deduce step by step carefully. The final line must be exactly 'Answer: <your answer>'.",
+            Cat.DEBUG: "You are a Python debugging expert. First line must be 'Bug: <short line>'. Then output only the corrected code.",
+            Cat.CODEGEN: "You are an expert Python developer. Output only valid Python code inside markdown block or plain code. No explanation.",
+        }
+        return systems.get(cat, None)
+
     def _remote(self, cat, prompt, plan, rmax):
-        model = self._pick_model(cat)
-        if not model or not (self.fw and self.fw.enabled):
+        if not (self.fw and self.fw.enabled):
             return self._last_resort(cat, prompt)
+
         allowed = set(self.sel.get("all") or [])
-        if allowed and model not in allowed:   # hard compliance guard
-            # If the specific model is banned, fall back to whatever strong/language is allowed
-            fallback = self.sel.get("strong") if plan.get("hard") else self.sel.get("language")
-            model = fallback or allowed.pop() if allowed else None
-            if not model:
-                return self._last_resort(cat, prompt)
-        u = prompts.build(cat, prompt)
+        gemma_model = "accounts/fireworks/models/gemma-4-26b-a4b-it"
+        if allowed and gemma_model not in allowed:
+            gemma_model = self.sel.get("language") or (allowed.pop() if allowed else None)
+
+        u = compress(prompts.build(cat, prompt))
         json_mode = bool(plan.get("json")) and not V.prompt_wants_custom_format(prompt)
+
+        # ── Step 1: Gemma-First Waterfall attempt ──
+        if gemma_model:
+            try:
+                sys_p = self._gemma_system_prompt(cat)
+                txt_gemma = self.fw.chat(gemma_model, u, max_tokens=rmax, json_mode=json_mode, system=sys_p)
+                ok_gemma, fixed_gemma = V.verify(cat, txt_gemma, prompt)
+                if ok_gemma:
+                    self.stats.append(dict(category=cat.value, remote_model="gemma", gemma_hit=True))
+                    return fixed_gemma
+            except Exception:
+                pass
+
+        # ── Step 2: Escalate to specialized reasoning/code model if Gemma failed/unverified ──
+        model = self._pick_model(cat)
+        if allowed and model not in allowed:
+            fallback = self.sel.get("strong") if plan.get("hard") else self.sel.get("language")
+            model = fallback or (allowed.pop() if allowed else None)
+
+        if not model:
+            return self._last_resort(cat, prompt)
+
         try:
             txt = self.fw.chat(model, u, max_tokens=rmax, json_mode=json_mode)
         except Exception:
             return self._last_resort(cat, prompt)
+
         ok, fixed = V.verify(cat, txt, prompt)
         if ok:
+            self.stats.append(dict(category=cat.value, remote_model=model, gemma_hit=False))
             return fixed
 
-        # If verification failed (e.g. format broken), do one corrective remote retry if time allows.
+        # ── Step 3: One corrective retry if time allows ──
         if not ok and self.dl.hard_remaining() > 8:
             try:
                 retry_p = f"{u}\n\nYour previous answer was incorrectly formatted or invalid. Please follow the instructions exactly."
