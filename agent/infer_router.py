@@ -27,14 +27,23 @@ def _load():
     _model.eval()
 
 
+# Confidence threshold: only classify as "hard" when the model is at least
+# this confident.  Raising this reduces false-positives (easy prompts sent
+# to the expensive remote model, wasting tokens) at the cost of potentially
+# missing some genuinely hard prompts.  0.65 is a good balance: the training
+# metrics showed recall=1.0 / precision=0.20, so we can afford to tighten.
+HARD_THRESHOLD = 0.65
+
+
 def predict(prompt: str) -> str:
-    """Returns "easy" or "hard"."""
+    """Returns "easy" or "hard" using confidence-based thresholding."""
     _load()
     enc = _tokenizer(prompt, truncation=True, padding=True, max_length=256, return_tensors="pt").to(_device)
     with torch.no_grad():
         logits = _model(**enc).logits
-    label_id = logits.argmax(dim=-1).item()
-    return "hard" if label_id == 1 else "easy"
+    probs = torch.softmax(logits, dim=-1)
+    hard_prob = probs[0, 1].item()     # probability of "hard"
+    return "hard" if hard_prob >= HARD_THRESHOLD else "easy"
 
 
 if __name__ == "__main__":
